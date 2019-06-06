@@ -51,7 +51,7 @@ public:
 	}
 	void on_receive(const std::string& data) override
 	{
-		if(!impl_)
+		if(unlikely(!impl_))
 			throw csn::Exception(csn::Exception::kErrorIllUsage, "null implment");
 		impl_->on_receive(data);
 	}

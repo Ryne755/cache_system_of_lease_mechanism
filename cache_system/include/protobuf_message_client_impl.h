@@ -65,7 +65,6 @@ public:
 		do_send_cache_message(socket_, ack);
 		PRINTF_MESSAGE_INFO("send", ack);
 	}
-	//uint64_t  op_id() { return op_id_; }
 protected:
 	void prepare_header(CacheMessageProto::CacheMessageType type/*IN*/, CacheMessage* message/*OUT*/) {
 		//set response header
@@ -147,7 +146,7 @@ public:
 			LOG_OUT("error failure ParseFromString\n");
 			return;
 		}
-		if (!header_available(message)) {
+		if (unlikely(!header_available(message))) {
 			return;
 		}
 		const CacheMessageHeader& header = message->header();

@@ -32,28 +32,34 @@ CACHE_NAMESPACE_END
 #include <unordered_map>
 #include <memory>
 #include <type_traits>
+#include <mutex>
 #include "cache_state_manager.h"
 
 CACHE_NAMESPACE_BEGIN
 template <typename T>
 struct CacheElement {
-	using ValueType=typename std::remove_cv<T>::type;
+	using ValueType=T;
 	static_assert(!std::is_reference_v<ValueType>&& !std::is_const_v<ValueType>, "value type should not be reference or const");
 	//simple value 
-	CacheElement() :value_(), state_(std::make_unique<CacheStateManager>()) {}
+	CacheElement() :value_(), temp_value_(), call_(), state_(CacheStateManager()), mutex_() {}
 	void call_handle(OpResult status, uint32_t op_id, std::time_t expire) {
 		if (status == OpResult::kOperationOk)
 			value_ = std::move(temp_value_);
 		call_(status, op_id, expire);
 	}
-
-	OpResult read_op(uint32_t op_id/*IN*/, std::time_t* expire/*OUT*/, ValueType* value) {
+	OpResult read_op(uint32_t op_id/*IN*/, std::time_t * expire/*OUT*/, ValueType * value) {
 		*value = value_;
-		return state_->read_op(op_id, expire);
+		std::lock_guard<std::mutex> lock(mutex_);
+		return state_.read_op(op_id, expire);
 	}
-	template< typename U, typename = std::enable_if_t<std::is_same_v<std::decay_t<U>, ValueType>>>
-	OpResult update_op(U&& value, uint32_t op_id/*IN*/, UpdateCallHandler f, std::time_t* expire) {
-		OpResult r = state_->update_op(&CacheElement::call_handle, this, op_id, expire);
+	template< typename U>
+	OpResult update_op(U && value, uint32_t op_id/*IN*/, UpdateCallHandler f, std::time_t * expire) 
+	{
+		OpResult r;
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			r = state_.update_op(&CacheElement::call_handle, this, op_id, expire);
+		}
 		if (OpResult::kOperationOk == r)
 			value_ = std::move(value);
 		else if (OpResult::kOperationDefer == r) {
@@ -70,14 +76,16 @@ private:
 	ValueType							 value_;
 	ValueType							 temp_value_;
 	UpdateCallHandler                    call_;
-	std::unique_ptr<CacheStateManager>   state_;
+	CacheStateManager					 state_;
+	std::mutex							 mutex_;
 };
 
 template <typename T>
 class CacheDataCenter : public std::enable_shared_from_this<CacheDataCenter<T>> {
 public:
 	using ValueType=T;
-	using iterator=typename std::unordered_map<uint64_t, CacheElement<ValueType>>::iterator;
+	using ElementType=CacheElement<ValueType>;
+	using iterator=typename std::unordered_map<uint64_t, std::unique_ptr<ElementType>>::iterator;
 	static_assert(!std::is_reference_v<ValueType> && !std::is_const_v<ValueType>, "value type should not be reference or const");
 
 	CacheDataCenter() = default;
@@ -87,22 +95,25 @@ public:
 		if (it == map_.end()) {
 			return OpResult::kOperationErrorNoData;
 		}
-		return it->second.read_op(op_id, expire, value);
+		return it->second->read_op(op_id, expire, value);
 	}
 	//
 	template< typename U>
 	OpResult update_op(uint64_t cache_id/*IN*/, U&& value/*IN*/, uint32_t op_id/*IN*/, UpdateCallHandler f/*IN*/, std::time_t* expire/*OUT*/) {
 		iterator it = map_.find(cache_id);
 		if (it == map_.end()) {
+			//CacheDataCenter synchronized when insert or delete
+			std::lock_guard<std::mutex> lock(mutex_);
 			//no value
-			std::pair<iterator, bool> pair= map_.emplace(cache_id, CacheElement<ValueType>());
-			if (pair.second == false)
-				throw Exception(Exception::kErrorSysRoutine,"unordered_map insert data error !!!");
+			std::pair<iterator, bool> pair = map_.emplace(cache_id, std::make_unique<ElementType>());
+			if (unlikely(pair.second == false))
+				throw Exception(Exception::kErrorSysRoutine, "unordered_map insert data error !!!");
 			it = pair.first;
 		}
-		return it->second.update_op(std::forward<U>(value), op_id, std::move(f), expire);
+		return it->second->update_op(std::forward<U>(value), op_id, std::move(f), expire);
 	}
 private:
-	std::unordered_map<uint64_t, CacheElement<ValueType>> map_;
+	std::unordered_map<uint64_t, std::unique_ptr<ElementType>> map_;
+	std::mutex	 mutex_;
 };
 CACHE_NAMESPACE_END

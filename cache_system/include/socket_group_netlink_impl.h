@@ -80,10 +80,10 @@ protected:
 	void on_receive(netLink::SocketManager* manager, std::shared_ptr<netLink::Socket> socket)
 	{
 		uint16_t length = socket->sgetn(buffer_.get(), kMaxUdpPacketSize);
-		if (length == 0)
+		if (unlikely(length == 0))
 			throw csn::Exception(csn::Exception::kErrorRead, "error socket group error read");
 		std::shared_ptr<UdpSocket> udpsocket = std::dynamic_pointer_cast<UdpSocket>(socket);
-		if (udpsocket == nullptr) {
+		if (unlikely(udpsocket == nullptr)) {
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "unsuport original socket!!!!");
 		}
 		buffer_.get()[length] = '\0';

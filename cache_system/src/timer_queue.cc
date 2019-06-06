@@ -62,7 +62,7 @@ void TimerQueue::tick() {
 	if (timer_queue_.empty())
 		return;
 	std::unique_ptr<EventTimer>& timer = timer_queue_.front();
-	while (timer->expired()) {
+	while (unlikely(timer->expired())) {
 		//here we actually delete a timer  
 		std::lock_guard<std::mutex> lock(mutex_);
 		if (timer->repeat_ > 0) {

@@ -44,7 +44,7 @@ public:
 	//resend cache response message
 	void timer_handle() {
 		do_send_cache_message(socket_, message_);
-		if (handle_)
+		if (likely(handle_!=nullptr))
 			handle_();
 	}
 	void set_custom_handle(CustomCallHandler handle) {
@@ -71,7 +71,7 @@ class CacheWaitAcktManager {
 public:
 	void register_wait_ack(const std::shared_ptr<ProtoSocket>& socket, CacheMessage* message)
 	{
-		if (message == nullptr || !message->has_header())
+		if (unlikely(message == nullptr || !message->has_header()))
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "message or message header should not be null");
 
 		std::shared_ptr<WaitCacheAck> ack = std::make_shared<WaitCacheAck>(socket, message);
@@ -84,15 +84,15 @@ public:
 	}
 	void unregister_wait_ack(uint64_t op_id) {
 		auto it = map_.find(op_id);
-		if (it == map_.end()) {
+		if (unlikely(it == map_.end())) {
 			//TODO rynzen, miss some race condition check
 			LOG_OUT("assume it was timeout and retransferred 0x%x", op_id);
 			return;
 		}
 
+		ContainerIteratorRaii(&map_,it);
 		std::size_t timer_id = it->second->timer_id();
 		csn::TimerQueue::get_timer_queue()->del_timer(timer_id);
-		map_.erase(it);
 	}
 	static CacheWaitAcktManager* get_wait_ack_manager() {
 		static CacheWaitAcktManager mng{};
@@ -101,7 +101,7 @@ public:
 private:
 	void expire_handle(uint64_t op_id) {
 		auto it = map_.find(op_id);
-		if (it == map_.end()) {
+		if (unlikely(it == map_.end())) {
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "WaitCacheAck should not be null");
 		}
 		map_.erase(it);
@@ -146,7 +146,7 @@ public:
 	CacheAckOperation(const std::shared_ptr<csn::CacheDataCenter<CacheDataType>>& center) :
 		CacheOperationInterface(center) {};
 	void on_process(const std::shared_ptr<ProtoSocket>& socket, CacheMessage* request) override {
-		if (!request || !request->has_header()) {
+		if (unlikely(!request || !request->has_header())) {
 			LOG_OUT("check ack failure !!!!");
 		}
 		PRINTF_MESSAGE_INFO("rcv", request);
@@ -160,7 +160,7 @@ public:
 	CacheReadRequestOperation(const std::shared_ptr<csn::CacheDataCenter<CacheDataType>>& center) :
 		CacheOperationInterface(center), timestamp_(), cache_id_(), cache_data_(), ret_() {}
 	void on_process(const std::shared_ptr<ProtoSocket>& socket, CacheMessage* request) override {
-		if (!request || !request->has_read_request()) {
+		if (unlikely(!request || !request->has_read_request())) {
 			LOG_OUT("check read_request failure !!!!");
 			return;
 		}
@@ -176,7 +176,7 @@ public:
 private:
 	CacheMessage* prepare_response_message(CacheMessage* request) {
 		google::protobuf::Arena* arena_ptr = request->GetArena();
-		if (!arena_ptr) {
+		if (unlikely(!arena_ptr)) {
 			LOG_OUT("get Arena failure !!!!");
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "arena_ptr should not be null");
 		}
@@ -213,7 +213,7 @@ public:
 		CacheOperationInterface(center),defer_messages_() {}
 	~CacheUpdateRequestOperation() = default;
 	void on_process(const std::shared_ptr<ProtoSocket>& socket, CacheMessage* request) {
-		if (!request || !request->has_update_request()) {
+		if (unlikely(!request || !request->has_update_request())) {
 			LOG_OUT("check update_request failure !!!!");
 			return;
 		}
@@ -230,7 +230,7 @@ public:
 private:
 	CacheMessage* prepare_response_message(CacheMessage* request, const UpdateResult& result) {
 		google::protobuf::Arena* arena_ptr = request->GetArena();
-		if (!arena_ptr) {
+		if (unlikely(!arena_ptr)) {
 			LOG_OUT("get Arena failure !!!!");
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "Arena should not be null");
 		}
@@ -245,13 +245,15 @@ private:
 	}
 	void update_handle(std::shared_ptr<ProtoSocket> socket, csn::OpResult ret, uint32_t op_id, std::time_t expire) {
 		using iterator=std::map<uint32_t, CacheMessage*>::iterator;
-		if (ret != csn::OpResult::kOperationOk) {
+		if (unlikely(ret != csn::OpResult::kOperationOk)) {
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "update callback throw a routine error");
 		}
 		iterator it = defer_messages_.find(op_id);
-		if (it == defer_messages_.end()) {
+		if (unlikely(it == defer_messages_.end())) {
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "defer_messages_ should not be null");
 		}
+		//should be before CacheMessageRaii
+		ContainerIteratorRaii(&defer_messages_, it);
 		CacheMessage* message = it->second;
 		CacheMessageRaii msg_raii(message);
 		UpdateResult result{};
@@ -265,8 +267,6 @@ private:
 		register_wait_ack(socket, response);
 		PRINTF_MESSAGE_INFO("send", response);
 		do_send_cache_message(socket, response);
-		//TODO rynzen, use raii modify erase messge
-		defer_messages_.erase(it);
 	}
 	//result:no stuff when return csn::kOperationDefer
 	csn::OpResult update_cache_center(CacheMessage* message, std::shared_ptr<ProtoSocket> socket, UpdateResult* result) {
@@ -311,14 +311,14 @@ public:
 	void on_receive(const std::string& data) override
 	{
 		CacheMessage* request = google::protobuf::Arena::CreateMessage<CacheMessage>(&arena_);
-		if (!request->ParseFromString(data) || !header_available(request))
+		if (unlikely(!request->ParseFromString(data) || !header_available(request)))
 		{
 			LOG_OUT("error parsing message\n");
 			return;
 		}
 		//LOG_OUT("on_receive 0x%x\n", request->header().type());
 		uint32_t index = (uint32_t)(request->header().type() - CacheMessageProto::kReadRequest);
-		if (index >= kCacheMessageCount)
+		if (unlikely(index >= kCacheMessageCount))
 			throw csn::Exception(csn::Exception::kErrorSysRoutine, "message type out of range !!!!!!!");
 		message_op_[index]->on_process(socket_, request);
 	}

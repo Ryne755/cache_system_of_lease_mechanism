@@ -30,8 +30,12 @@
 
 #if defined(_WIN32) || defined(__WIN32__) || defined(_MSC_VER)
 #define OS_WINDOWS
+#define likely(x)   (x)
+#define unlikely(x) (!x)
 #else
 #define OS_LINUX
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
 
 CACHE_NAMESPACE_BEGIN

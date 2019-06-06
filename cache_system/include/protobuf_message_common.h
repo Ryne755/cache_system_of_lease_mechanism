@@ -45,6 +45,17 @@ CACHE_NAMESPACE_BEGIN
 //depend on this define of proto buffer cache_data ,current is std::string
 using CacheDataType=std::decay_t<decltype(std::declval<CacheOpResponse>().cache_data())>;
 
+template <typename Container>
+class ContainerIteratorRaii {
+	using iterator=typename Container::iterator;
+public:
+	ContainerIteratorRaii(Container* container,const iterator& it) :container_(container),it_(it){}
+	~ContainerIteratorRaii() { container_->erase(it_); }
+private:
+	Container* container_;
+	iterator   it_;
+};
+
 class CacheMessageRaii
 {
 public:

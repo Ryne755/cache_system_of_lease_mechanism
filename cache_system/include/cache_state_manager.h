@@ -71,7 +71,7 @@ private:
 	public:
 		CacheGuaranteedState(CacheStateManager& mng) :CacheStateInterface(mng) {}
 		OpResult update_op(uint32_t op_id/*IN*/, UpdateCallHandler f/*IN*/, std::time_t* tp/*OUT*/) override {
-			if (!op_id || !f)
+			if (unlikely(!op_id || !f))
 				throw Exception(Exception::kErrorIllArgument, "CacheGuaranteedState update_op with error argument");
 			mng_.set_op_id(op_id);
 			mng_.set_call_handle(f);
@@ -106,7 +106,7 @@ private:
 		}
 		void enter_state() override {
 			int32_t  timer_delay = mng_.expire_time() - get_time_stamp();
-			if (timer_delay <= 0)
+			if (unlikely(timer_delay <= 0))
 				throw Exception(Exception::kErrorSysRoutine, "timer is expire,should not run here");
 
 			auto function = [this]() {
